@@ -7,6 +7,10 @@ comparison of altitude tracking and elevator commands.
 """
 
 import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from environment import AircraftEnvironment
 from sensor import LiDARSensor
@@ -22,6 +26,8 @@ def run_agent_env_sensor_loop(
     use_ekf_pid_controller,
     sensor_args,
     specification,
+    save_trajectory_plot=False,
+    trajectory_plot_path="plots/plane_trajectory.png",
 ):
     """Run the full agent-environment-sensor rollout.
 
@@ -43,6 +49,8 @@ def run_agent_env_sensor_loop(
 
     state = env.reset(z0=z0)
     sensor.reset()
+    x_traj = [float(state[2])]
+    z_traj = [float(state[0])]
 
     raw_pid = SensorPIDController()
     ekf_pid = EKFPIDController(lateral_damping_enabled=enable_lateral_damper)
@@ -129,6 +137,8 @@ def run_agent_env_sensor_loop(
         success, state = env.step(delta_e_cmd, delta_a=delta_a_cmd)
 
         z_next, _dz_next, _x_next, _dx_next, theta_next, _dth_next = state
+        x_traj.append(float(state[2]))
+        z_traj.append(float(z_next))
         post_step_violations = check_spec_violations(z_next, theta_next)
         if post_step_violations:
             terminated_early = True
@@ -167,6 +177,46 @@ def run_agent_env_sensor_loop(
     else:
         print(f"\nCompleted {n_steps} steps without constraint violation.")
 
+    trajectory_plot = None
+    if save_trajectory_plot:
+        try:
+            fig, ax = plt.subplots(figsize=(8, 4.5))
+            ax.plot(x_traj, z_traj, label="Plane trajectory", linewidth=2)
+            ax.axhline(z_target, linestyle="--", linewidth=1.5, label="z_target")
+            if specification is not None:
+                ax.axhline(
+                    specification["z_min"],
+                    linestyle=":",
+                    linewidth=1.2,
+                    label="z_min",
+                )
+                ax.axhline(
+                    specification["z_max"],
+                    linestyle=":",
+                    linewidth=1.2,
+                    label="z_max",
+                )
+            ax.set_xlabel("x position (m)")
+            ax.set_ylabel("altitude z (m)")
+            ax.set_title("Plane trajectory")
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best")
+            fig.tight_layout()
+            fig.savefig(trajectory_plot_path, dpi=150)
+            plt.close(fig)
+            print(f"Saved trajectory plot to {trajectory_plot_path}")
+            trajectory_plot = {
+                "saved": True,
+                "path": trajectory_plot_path,
+                "num_points": len(x_traj),
+            }
+        except Exception as exc:
+            trajectory_plot = {
+                "saved": False,
+                "path": trajectory_plot_path,
+                "error": str(exc),
+            }
+
     return {
         "terminated_early": terminated_early,
         "termination_step": termination_step,
@@ -176,6 +226,7 @@ def run_agent_env_sensor_loop(
         "final_state": state,
         "used_ekf_pid": use_ekf_pid_controller,
         "specification": specification,
+        "trajectory_plot": trajectory_plot,
     }
 
 
@@ -185,17 +236,19 @@ Z_TARGET = 0.5  # target altitude (m)
 N_STEPS = 2000  # timesteps
 SEED = 42
 ENABLE_LATERAL_DAMPER = True
-USE_EKF_PID_CONTROLLER = False
+USE_EKF_PID_CONTROLLER = True
+SAVE_TRAJECTORY_PLOT = True
+TRAJECTORY_PLOT_PATH = "plots/plane_trajectory.png"
 SENSOR_ARGS = dict(
-    mu_A=0.05,
-    sigma_A=0.02,
+    mu_A=0.1,
+    sigma_A=0.05,
     mu_k=2 * np.pi,  # ≈ 1 m wavelength
     sigma_k=0.5,
     sigma_eps=0.01,
     p_penetration=0.05,
-    alpha_min=0.5,
+    alpha_min=0.10,
     alpha_max=10,
-    perfect_sensing=True,
+    perfect_sensing=False,
 )
 SPECIFICATION = dict(
     z_min=0.1,
@@ -215,4 +268,6 @@ if __name__ == "__main__":
         use_ekf_pid_controller=USE_EKF_PID_CONTROLLER,
         sensor_args=SENSOR_ARGS,
         specification=SPECIFICATION,
+        save_trajectory_plot=SAVE_TRAJECTORY_PLOT,
+        trajectory_plot_path=TRAJECTORY_PLOT_PATH,
     )

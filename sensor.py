@@ -49,7 +49,7 @@ class LiDARSensor:
         sigma_eps=0.01,
         p_penetration=0.05,
         alpha_min=0.10,
-        alpha_max=0.50,
+        alpha_max=10,
         perfect_sensing=False,
     ):
         self.perfect_sensing = perfect_sensing
