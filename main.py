@@ -28,10 +28,23 @@ def run_agent_env_sensor_loop(
     specification,
     save_trajectory_plot=False,
     trajectory_plot_path="plots/plane_trajectory.png",
+    ground_effect_enabled=False,
 ):
     """Run the full agent-environment-sensor rollout.
 
     This function is intended to be imported and called externally.
+    
+    :param z0: Initial altitude (m)
+    :param z_target: Target altitude (m)
+    :param n_steps: Number of simulation steps
+    :param seed: Random seed
+    :param enable_lateral_damper: Enable lateral stabilization damper
+    :param use_ekf_pid_controller: Use EKF+PID vs pure PID
+    :param sensor_args: Dict of sensor configuration parameters
+    :param specification: Dict with z_min, z_max, pitch_min, pitch_max bounds
+    :param save_trajectory_plot: Whether to save trajectory visualization
+    :param trajectory_plot_path: Path to save trajectory plot
+    :param ground_effect_enabled: Enable aerodynamic ground effect correction
     """
     if specification is not None:
         required_keys = ("z_min", "z_max", "pitch_min", "pitch_max")
@@ -42,7 +55,7 @@ def run_agent_env_sensor_loop(
                 "Expected z_min, z_max, pitch_min, pitch_max."
             )
 
-    env = AircraftEnvironment()
+    env = AircraftEnvironment(ground_effect_enabled=ground_effect_enabled)
     sensor = LiDARSensor(**sensor_args)
     env.seed(seed)
     sensor.seed(seed)
@@ -237,6 +250,7 @@ N_STEPS = 2000  # timesteps
 SEED = 42
 ENABLE_LATERAL_DAMPER = True
 USE_EKF_PID_CONTROLLER = True
+GROUND_EFFECT_ENABLED = True  # Enable ground effect aerodynamic correction
 SAVE_TRAJECTORY_PLOT = True
 TRAJECTORY_PLOT_PATH = "plots/plane_trajectory.png"
 SENSOR_ARGS = dict(
@@ -270,4 +284,5 @@ if __name__ == "__main__":
         specification=SPECIFICATION,
         save_trajectory_plot=SAVE_TRAJECTORY_PLOT,
         trajectory_plot_path=TRAJECTORY_PLOT_PATH,
+        ground_effect_enabled=GROUND_EFFECT_ENABLED,
     )

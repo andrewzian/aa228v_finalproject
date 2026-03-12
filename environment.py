@@ -29,11 +29,15 @@ class AircraftEnvironment:
     """
 
     DEFAULT_THROTTLE = 0.5  # ~17 m/s cruise starting point; tune empirically
+    GROUND_EFFECT_REFERENCE_ALTITUDE = 3.0  # where ground effect becomes negligible (m)
 
-    def __init__(self, config_kw=None):
+    def __init__(self, config_kw=None, ground_effect_enabled=False):
         """
         :param config_kw: (dict or None) optional overrides to PyFly config.
                           Merged on top of the low-altitude-safe defaults.
+        :param ground_effect_enabled: (bool) Enable ground effect aerodynamic correction.
+                          When True, induced drag is reduced at low altitudes,
+                          improving lift efficiency. Significant below ~3m altitude.
         """
         base_kw = {
             "turbulence": False,
@@ -45,6 +49,43 @@ class AircraftEnvironment:
 
         self.sim = PyFly(config_kw=base_kw)
         self.throttle = self.DEFAULT_THROTTLE
+        self.ground_effect_enabled = ground_effect_enabled
+
+    def seed(self, s):
+        """Seed the PyFly RNG."""
+        self.sim.seed(s)
+
+    def get_ground_effect_factor(self, altitude):
+        """
+        Compute ground effect correction factor.
+        
+        Ground effect reduces induced drag as altitude decreases, improving
+        aerodynamic efficiency. This is modeled as an altitude-dependent
+        multiplicative efficiency gain:
+        
+            factor = 1.0 + (1.6 - 1.0) / (1 + altitude / h_ref)
+        
+        where h_ref = reference altitude at which effect is significant.
+        
+        Returns factor >= 1.0, where:
+        - factor ≈ 1.6 at ground level (h=0, maximum ground effect)
+        - factor ≈ 1.3 at h=h_ref (moderate effect)
+        - factor → 1.0 as h → ∞ (negligible ground effect)
+        
+        :param altitude: current altitude above ground (m)
+        :return: ground effect correction factor (float)
+        """
+        if altitude <= 0:
+            altitude = 0.0001  # clamp to small positive value
+        
+        # Altitude-normalized ground effect: efficiency gain decays with altitude
+        # Max gain is 0.6 (60% improvement from 1.0 baseline)
+        # Decay around h_ref ≈ 0.5 m (where effect is most significant)
+        h_ref = 0.5  # characteristic altitude for ground effect
+        max_gain = 0.6
+        
+        factor = 1.0 + max_gain / (1.0 + altitude / h_ref)
+        return factor
 
     def seed(self, s):
         """Seed the PyFly RNG."""
@@ -91,9 +132,33 @@ class AircraftEnvironment:
         :return: (success, state)
                  success -- bool, False if a PyFly constraint was violated
                  state   -- np.ndarray [z, dz, x, dx, theta, dtheta]
+        
+        Notes:
+            When ground effect is enabled, an aerodynamic correction is applied
+            to account for reduced induced drag at low altitudes. This improves
+            altitude-holding efficiency and affects control responses.
         """
         commands = [-delta_e, delta_a, self.throttle]  # negate: our +δe = nose-up, PyFly +δe = nose-down
         success, info = self.sim.step(commands)
+        
+        # Apply ground effect correction if enabled
+        if self.ground_effect_enabled:
+            z = -self.sim.state["position_d"].value
+            ge_factor = self.get_ground_effect_factor(z)
+            
+            # Ground effect increases lift efficiency, reducing sink rate.
+            # Apply correction by scaling the vertical velocity (velocity_w).
+            # Factor > 1.0 means better lift, so we reduce negative velocity_w.
+            velocity_w_current = self.sim.state["velocity_w"].value
+            if velocity_w_current > 0:  # sinking (positive w is down in body frame)
+                # Reduce sink rate proportionally to ground effect factor
+                # correction = (ge_factor - 1.0) represents the efficiency gain
+                correction = velocity_w_current * (1.0 - 1.0 / ge_factor)
+                velocity_w_corrected = velocity_w_current - correction
+                # Clamp to reasonable bounds to avoid over-correction
+                velocity_w_corrected = np.clip(velocity_w_corrected, -5.0, 0.5)
+                self.sim.state["velocity_w"].value = velocity_w_corrected
+        
         return success, self.get_state()
 
     def get_lateral_state(self):
