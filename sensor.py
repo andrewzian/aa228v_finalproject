@@ -37,6 +37,7 @@ class LiDARSensor:
         p_penetration probability that LiDAR penetrates the water surface
         alpha_min     minimum water-penetration depth (m)
         alpha_max     maximum water-penetration depth (m)
+        perfect_sensing if True, force ideal sensing (z_hat=z, theta_hat=theta)
     """
 
     def __init__(
@@ -49,7 +50,20 @@ class LiDARSensor:
         p_penetration=0.05,
         alpha_min=0.10,
         alpha_max=0.50,
+        perfect_sensing=False,
     ):
+        self.perfect_sensing = perfect_sensing
+
+        if self.perfect_sensing:
+            mu_A = 0.0
+            sigma_A = 0.0
+            mu_k = 0.0
+            sigma_k = 0.0
+            sigma_eps = 0.0
+            p_penetration = 0.0
+            alpha_min = 0.0
+            alpha_max = 0.0
+
         self.mu_A = mu_A
         self.sigma_A = sigma_A
         self.mu_k = mu_k
@@ -75,9 +89,14 @@ class LiDARSensor:
         Sample per-rollout environmental parameters.
         Must be called before the first measure() of each episode.
         """
-        self.A     = self.rng.normal(self.mu_A, self.sigma_A)
-        self.k     = self.rng.normal(self.mu_k, self.sigma_k)
-        self.alpha = self.rng.uniform(self.alpha_min, self.alpha_max)
+        if self.perfect_sensing:
+            self.A = 0.0
+            self.k = 0.0
+            self.alpha = 0.0
+        else:
+            self.A     = self.rng.normal(self.mu_A, self.sigma_A)
+            self.k     = self.rng.normal(self.mu_k, self.sigma_k)
+            self.alpha = self.rng.uniform(self.alpha_min, self.alpha_max)
 
     def measure(self, z, x, theta):
         """
@@ -90,6 +109,9 @@ class LiDARSensor:
                  z_hat     -- noisy LiDAR altitude reading (m)
                  theta_hat -- pitch reading (= theta, perfect)
         """
+        if self.perfect_sensing:
+            return z, theta
+
         if self.rng.random() < self.p_penetration:
             # LiDAR beam penetrates the water surface; reads deeper than reality.
             # α is a positive offset (sensor over-reads altitude).

@@ -77,19 +77,35 @@ class AircraftEnvironment:
         self.sim.reset(state=init_state)
         return self.get_state()
 
-    def step(self, delta_e):
+    def step(self, delta_e, delta_a=0.0):
         """
         Advance the simulation by one timestep (dt = 0.01 s by default).
 
-        :param delta_e: elevator deflection (rad); positive = trailing-edge down
-                        (convention matches PyFly PIDController output)
+        :param delta_e: elevator deflection (rad); positive = nose-up
+                        (controller convention: positive delta_e raises altitude).
+                        Internally negated before passing to PyFly because PyFly's
+                        X8 elevon model uses the opposite sign (positive PyFly
+                        command → trailing-edge down on a flying-wing elevon →
+                        nose-DOWN pitching moment).
+        :param delta_a: aileron command (rad), positive = roll-right command.
         :return: (success, state)
                  success -- bool, False if a PyFly constraint was violated
                  state   -- np.ndarray [z, dz, x, dx, theta, dtheta]
         """
-        commands = [delta_e, 0.0, self.throttle]  # [elevator_rad, aileron_rad, throttle]
+        commands = [-delta_e, delta_a, self.throttle]  # negate: our +δe = nose-up, PyFly +δe = nose-down
         success, info = self.sim.step(commands)
         return success, self.get_state()
+
+    def get_lateral_state(self):
+        """
+        Extract lateral-directional states needed for stabilization.
+
+        :return: np.ndarray [roll, omega_p, omega_r]
+        """
+        roll = self.sim.state["roll"].value
+        omega_p = self.sim.state["omega_p"].value
+        omega_r = self.sim.state["omega_r"].value
+        return np.array([roll, omega_p, omega_r])
 
     def get_state(self):
         """

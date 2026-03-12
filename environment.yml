@@ -1,0 +1,14 @@
+name: cs228v_finalproject
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - numpy
+  - matplotlib
+  - ipykernel
+  - notebook
+  - pip
+  - pip:
+    - filterpy
+    - git+https://github.com/eivindeb/pyfly.git  # pyfly-fixed-wing; the pyfly on PyPI is a different package
