@@ -64,6 +64,7 @@ def run_agent_env_sensor_loop(
     sensor.reset()
     x_traj = [float(state[2])]
     z_traj = [float(state[0])]
+    delta_e_traj = [0.0]  # track elevator deflection commands
 
     raw_pid = SensorPIDController()
     ekf_pid = EKFPIDController(lateral_damping_enabled=enable_lateral_damper)
@@ -152,6 +153,7 @@ def run_agent_env_sensor_loop(
         z_next, _dz_next, _x_next, _dx_next, theta_next, _dth_next = state
         x_traj.append(float(state[2]))
         z_traj.append(float(z_next))
+        delta_e_traj.append(float(delta_e_cmd))
         post_step_violations = check_spec_violations(z_next, theta_next)
         if post_step_violations:
             terminated_early = True
@@ -193,27 +195,44 @@ def run_agent_env_sensor_loop(
     trajectory_plot = None
     if save_trajectory_plot:
         try:
-            fig, ax = plt.subplots(figsize=(8, 4.5))
-            ax.plot(x_traj, z_traj, label="Plane trajectory", linewidth=2)
-            ax.axhline(z_target, linestyle="--", linewidth=1.5, label="z_target")
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+            
+            # Altitude trajectory
+            ax1.plot(x_traj, z_traj, label="Plane trajectory", linewidth=2.5, color="steelblue")
+            ax1.axhline(z_target, linestyle="--", linewidth=1.5, label="z_target", color="green")
             if specification is not None:
-                ax.axhline(
+                ax1.axhline(
                     specification["z_min"],
                     linestyle=":",
                     linewidth=1.2,
                     label="z_min",
+                    color="red",
+                    alpha=0.7,
                 )
-                ax.axhline(
+                ax1.axhline(
                     specification["z_max"],
                     linestyle=":",
                     linewidth=1.2,
                     label="z_max",
+                    color="red",
+                    alpha=0.7,
                 )
-            ax.set_xlabel("x position (m)")
-            ax.set_ylabel("altitude z (m)")
-            ax.set_title("Plane trajectory")
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="best")
+            ax1.set_ylabel("altitude z (m)", fontsize=11)
+            ax1.set_title("Flight Trajectory and Control Authority", fontsize=12, fontweight="bold")
+            ax1.grid(True, alpha=0.3)
+            ax1.legend(loc="best")
+            
+            # Elevator deflection
+            delta_e_deg = [np.rad2deg(de) for de in delta_e_traj]
+            ax2.plot(x_traj, delta_e_deg, label="Elevator deflection", linewidth=2.5, color="darkorange")
+            ax2.axhline(0, linestyle="-", linewidth=1, alpha=0.5, color="black")
+            ax2.axhline(25.0, linestyle="--", linewidth=1.2, label="+25° limit", color="red", alpha=0.7)
+            ax2.axhline(-25.0, linestyle="--", linewidth=1.2, label="-25° limit", color="red", alpha=0.7)
+            ax2.set_xlabel("x position (m)", fontsize=11)
+            ax2.set_ylabel("elevator deflection (deg)", fontsize=11)
+            ax2.grid(True, alpha=0.3)
+            ax2.legend(loc="best")
+            
             fig.tight_layout()
             fig.savefig(trajectory_plot_path, dpi=150)
             plt.close(fig)
