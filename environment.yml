@@ -3,7 +3,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.10
+  - python=3.9
   - numpy
   - matplotlib
   - ipykernel
@@ -11,4 +11,4 @@ dependencies:
   - pip
   - pip:
     - filterpy
-    - pyfly
+    - git+https://github.com/eivindeb/pyfly.git  # pyfly-fixed-wing; the pyfly on PyPI is a different package
