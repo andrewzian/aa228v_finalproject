@@ -18,14 +18,14 @@ from agent import SensorPIDController, EKFPIDController
 
 
 def run_agent_env_sensor_loop(
-    z0,
+    rollout_args,
     z_target,
     n_steps,
     seed,
     enable_lateral_damper,
     use_ekf_pid_controller,
-    sensor_args,
     specification,
+    nominal_rollout_args=None,
     save_trajectory_plot=False,
     trajectory_plot_path="plots/plane_trajectory.png",
     ground_effect_enabled=False,
@@ -34,18 +34,53 @@ def run_agent_env_sensor_loop(
 
     This function is intended to be imported and called externally.
     
-    :param z0: Initial altitude (m)
+    :param rollout_args: Dict with rollout/proposal distribution parameters:
+                                  {'mu_z0', 'sigma_z0', 'sensor_args'}
     :param z_target: Target altitude (m)
     :param n_steps: Number of simulation steps
     :param seed: Random seed
     :param enable_lateral_damper: Enable lateral stabilization damper
     :param use_ekf_pid_controller: Use EKF+PID vs pure PID
-    :param sensor_args: Dict of sensor configuration parameters
+    :param nominal_rollout_args: Optional dict with nominal scoring distribution:
+                                 {'mu_z0', 'sigma_z0', 'sensor_args'}
     :param specification: Dict with z_min, z_max, pitch_min, pitch_max bounds
     :param save_trajectory_plot: Whether to save trajectory visualization
     :param trajectory_plot_path: Path to save trajectory plot
     :param ground_effect_enabled: Enable aerodynamic ground effect correction
     """
+    if nominal_rollout_args is None:
+        nominal_rollout_args = {
+            "mu_z0": rollout_args.get("mu_z0"),
+            "sigma_z0": rollout_args.get("sigma_z0"),
+            "sensor_args": rollout_args.get("sensor_args"),
+        }
+
+    required_rollout_keys = ("mu_z0", "sigma_z0", "sensor_args")
+    missing_rollout_keys = [
+        key for key in required_rollout_keys if key not in rollout_args
+    ]
+    if missing_rollout_keys:
+        raise ValueError(
+            f"rollout_args missing required keys: {missing_rollout_keys}. "
+            "Expected mu_z0, sigma_z0, sensor_args."
+        )
+
+    missing_nominal_keys = [
+        key for key in required_rollout_keys if key not in nominal_rollout_args
+    ]
+    if missing_nominal_keys:
+        raise ValueError(
+            f"nominal_rollout_args missing required keys: {missing_nominal_keys}. "
+            "Expected mu_z0, sigma_z0, sensor_args."
+        )
+
+    rollout_mu_z0 = float(rollout_args["mu_z0"])
+    rollout_sigma_z0 = float(rollout_args["sigma_z0"])
+    rollout_sensor_args = rollout_args["sensor_args"]
+    nominal_mu_z0 = float(nominal_rollout_args["mu_z0"])
+    nominal_sigma_z0 = float(nominal_rollout_args["sigma_z0"])
+    nominal_sensor_params = nominal_rollout_args["sensor_args"]
+
     if specification is not None:
         required_keys = ("z_min", "z_max", "pitch_min", "pitch_max")
         missing_keys = [key for key in required_keys if key not in specification]
@@ -55,8 +90,39 @@ def run_agent_env_sensor_loop(
                 "Expected z_min, z_max, pitch_min, pitch_max."
             )
 
+    if rollout_sigma_z0 < 0:
+        raise ValueError("rollout sigma_z0 must be non-negative")
+    if nominal_sigma_z0 < 0:
+        raise ValueError("nominal sigma_z0 must be non-negative")
+
+    def gaussian_logpdf(value, mu, sigma):
+        if sigma == 0:
+            return 0.0 if np.isclose(value, mu) else -np.inf
+        variance = sigma * sigma
+        return float(
+            -0.5 * np.log(2.0 * np.pi * variance)
+            - ((value - mu) ** 2) / (2.0 * variance)
+        )
+
+    if rollout_sigma_z0 == 0:
+        z0 = float(rollout_mu_z0)
+    else:
+        rollout_rng = np.random.default_rng(seed)
+        z0 = float(rollout_rng.normal(rollout_mu_z0, rollout_sigma_z0))
+
+    z0_log_likelihood_rollout = gaussian_logpdf(
+        z0,
+        rollout_mu_z0,
+        rollout_sigma_z0,
+    )
+    z0_log_likelihood_nominal = gaussian_logpdf(
+        z0,
+        nominal_mu_z0,
+        nominal_sigma_z0,
+    )
+
     env = AircraftEnvironment(ground_effect_enabled=ground_effect_enabled)
-    sensor = LiDARSensor(**sensor_args)
+    sensor = LiDARSensor(**rollout_sensor_args, nominal_params=nominal_sensor_params)
     env.seed(seed)
     sensor.seed(seed)
 
@@ -249,6 +315,15 @@ def run_agent_env_sensor_loop(
                 "error": str(exc),
             }
 
+    log_likelihoods = sensor.get_log_likelihoods()
+
+    rollout_breakdown = dict(log_likelihoods["proposal"])
+    nominal_breakdown = dict(log_likelihoods["nominal"])
+    rollout_breakdown["initial"] += z0_log_likelihood_rollout
+    rollout_breakdown["total"] += z0_log_likelihood_rollout
+    nominal_breakdown["initial"] += z0_log_likelihood_nominal
+    nominal_breakdown["total"] += z0_log_likelihood_nominal
+
     return {
         "terminated_early": terminated_early,
         "termination_step": termination_step,
@@ -256,14 +331,48 @@ def run_agent_env_sensor_loop(
         "termination_message": termination_message,
         "violated_spec": violated_spec,
         "final_state": state,
+        "z0_sampled": z0,
+        "mu_z0": rollout_mu_z0,
+        "sigma_z0": rollout_sigma_z0,
         "used_ekf_pid": use_ekf_pid_controller,
         "specification": specification,
         "trajectory_plot": trajectory_plot,
+        "trajectory_log_likelihood": rollout_breakdown["total"],
+        "trajectory_log_likelihood_breakdown": rollout_breakdown,
+        "trajectory_log_likelihood_rollout": rollout_breakdown["total"],
+        "trajectory_log_likelihood_rollout_breakdown": rollout_breakdown,
+        "trajectory_log_likelihood_nominal": nominal_breakdown["total"],
+        "trajectory_log_likelihood_nominal_breakdown": nominal_breakdown,
+        "trajectory_log_importance_weight": (
+            nominal_breakdown["total"] - rollout_breakdown["total"]
+        ),
+        "rollout_args": rollout_args,
+        "nominal_rollout_args": nominal_rollout_args,
+        "nominal_sensor_args": nominal_sensor_params,
     }
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-Z0 = 0.5  # initial altitude (m)
+ROLLOUT_ARGS = {
+    "mu_z0": 0.5,
+    "sigma_z0": 0.0,
+    "sensor_args": {
+        "mu_A": 0.1,
+        "sigma_A": 0.05,
+        "mu_k": 2 * np.pi,  # ≈ 1 m wavelength
+        "sigma_k": 0.5,
+        "sigma_eps": 0.01,
+        "p_penetration": 0.05,
+        "alpha_min": 0.10,
+        "alpha_max": 10,
+        "perfect_sensing": False,
+    },
+}
+NOMINAL_ROLLOUT_ARGS = {
+    "mu_z0": 0.5,
+    "sigma_z0": 0.0,
+    "sensor_args": dict(ROLLOUT_ARGS["sensor_args"]),
+}
 Z_TARGET = 0.5  # target altitude (m)
 N_STEPS = 2000  # timesteps
 SEED = 42
@@ -272,17 +381,6 @@ USE_EKF_PID_CONTROLLER = True
 GROUND_EFFECT_ENABLED = True  # Enable ground effect aerodynamic correction
 SAVE_TRAJECTORY_PLOT = True
 TRAJECTORY_PLOT_PATH = "plots/plane_trajectory.png"
-SENSOR_ARGS = dict(
-    mu_A=0.1,
-    sigma_A=0.05,
-    mu_k=2 * np.pi,  # ≈ 1 m wavelength
-    sigma_k=0.5,
-    sigma_eps=0.01,
-    p_penetration=0.05,
-    alpha_min=0.10,
-    alpha_max=10,
-    perfect_sensing=False,
-)
 SPECIFICATION = dict(
     z_min=0.1,
     z_max=1.0,
@@ -293,13 +391,13 @@ SPECIFICATION = dict(
 
 if __name__ == "__main__":
     run_agent_env_sensor_loop(
-        z0=Z0,
+        rollout_args=ROLLOUT_ARGS,
+        nominal_rollout_args=NOMINAL_ROLLOUT_ARGS,
         z_target=Z_TARGET,
         n_steps=N_STEPS,
         seed=SEED,
         enable_lateral_damper=ENABLE_LATERAL_DAMPER,
         use_ekf_pid_controller=USE_EKF_PID_CONTROLLER,
-        sensor_args=SENSOR_ARGS,
         specification=SPECIFICATION,
         save_trajectory_plot=SAVE_TRAJECTORY_PLOT,
         trajectory_plot_path=TRAJECTORY_PLOT_PATH,
