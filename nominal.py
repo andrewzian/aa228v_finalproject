@@ -22,3 +22,5 @@ SPECIFICATION = dict(
     pitch_min=-np.deg2rad(15.0),
     pitch_max=np.deg2rad(15.0),
 )
+
+Z_TARGET = 0.5
