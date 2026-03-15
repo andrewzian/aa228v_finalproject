@@ -81,7 +81,7 @@ class AircraftEnvironment:
         # Altitude-normalized ground effect: efficiency gain decays with altitude
         # Max gain is 0.6 (60% improvement from 1.0 baseline)
         # Decay around h_ref ≈ 0.8 m (where effect is most significant)
-        h_ref = 0.8  # characteristic altitude for ground effect
+        h_ref = 0.5  # characteristic altitude for ground effect
         max_gain = 0.6
         
         factor = 1.0 + max_gain / (1.0 + altitude / h_ref)
